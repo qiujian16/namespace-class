@@ -99,7 +99,7 @@ var _ = Describe("NamespaceClass Webhook", func() {
 				configMapManifest("cm-a"),
 				configMapManifest("cm-a"), // duplicate
 			}
-			_, err := validator.ValidateUpdate(nil, &qiujian16githubcomv1.NamespaceClass{}, obj)
+			_, err := validator.ValidateUpdate(context.TODO(), &qiujian16githubcomv1.NamespaceClass{}, obj)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("duplicate"))
 		})

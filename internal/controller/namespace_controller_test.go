@@ -51,9 +51,10 @@ var _ = Describe("Namespace Controller", func() {
 		return fmt.Sprintf("%08x", rand.Uint32())
 	}
 
+	configMapGVK := corev1.SchemeGroupVersion.WithKind("ConfigMap")
 	configMapManifest := func(name string) qiujian16githubcomv1.Manifest {
 		raw, _ := json.Marshal(&corev1.ConfigMap{
-			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+			TypeMeta:   metav1.TypeMeta{APIVersion: configMapGVK.GroupVersion().String(), Kind: configMapGVK.Kind},
 			ObjectMeta: metav1.ObjectMeta{Name: name},
 		})
 		return qiujian16githubcomv1.Manifest{RawExtension: runtime.RawExtension{Raw: raw}}
@@ -61,7 +62,7 @@ var _ = Describe("Namespace Controller", func() {
 
 	configMapManifestWithData := func(name string, data map[string]string) qiujian16githubcomv1.Manifest {
 		raw, _ := json.Marshal(&corev1.ConfigMap{
-			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+			TypeMeta:   metav1.TypeMeta{APIVersion: configMapGVK.GroupVersion().String(), Kind: configMapGVK.Kind},
 			ObjectMeta: metav1.ObjectMeta{Name: name},
 			Data:       data,
 		})
