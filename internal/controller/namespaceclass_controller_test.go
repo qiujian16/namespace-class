@@ -47,12 +47,10 @@ var _ = Describe("NamespaceClass Controller", func() {
 	}
 
 	configMapManifest := func(name string) qiujian16githubcomv1.Manifest {
-		cm := map[string]interface{}{
-			"apiVersion": "v1",
-			"kind":       "ConfigMap",
-			"metadata":   map[string]interface{}{"name": name},
-		}
-		raw, _ := json.Marshal(cm)
+		raw, _ := json.Marshal(&corev1.ConfigMap{
+			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+		})
 		return qiujian16githubcomv1.Manifest{RawExtension: runtime.RawExtension{Raw: raw}}
 	}
 

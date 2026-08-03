@@ -17,6 +17,8 @@ limitations under the License.
 package v1
 
 import (
+	"context"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -54,12 +56,12 @@ var _ = Describe("NamespaceClass Webhook", func() {
 				configMapManifest("cm-a"),
 				configMapManifest("cm-b"),
 			}
-			_, err := validator.ValidateCreate(nil, obj)
+			_, err := validator.ValidateCreate(context.TODO(), obj)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("should admit an empty manifest list", func() {
-			_, err := validator.ValidateCreate(nil, obj)
+			_, err := validator.ValidateCreate(context.TODO(), obj)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -69,7 +71,7 @@ var _ = Describe("NamespaceClass Webhook", func() {
 				configMapManifest("cm-b"),
 				configMapManifest("cm-a"), // duplicate
 			}
-			_, err := validator.ValidateCreate(nil, obj)
+			_, err := validator.ValidateCreate(context.TODO(), obj)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("duplicate"))
 		})
@@ -79,7 +81,7 @@ var _ = Describe("NamespaceClass Webhook", func() {
 				configMapManifest("cm-a"),
 				namespaceManifest("some-ns"),
 			}
-			_, err := validator.ValidateCreate(nil, obj)
+			_, err := validator.ValidateCreate(context.TODO(), obj)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("Namespace"))
 		})
@@ -88,7 +90,7 @@ var _ = Describe("NamespaceClass Webhook", func() {
 			obj.Spec.Policies.Manifests = []qiujian16githubcomv1.Manifest{
 				{RawExtension: runtime.RawExtension{Raw: []byte(`not-json`)}},
 			}
-			_, err := validator.ValidateCreate(nil, obj)
+			_, err := validator.ValidateCreate(context.TODO(), obj)
 			Expect(err).To(HaveOccurred())
 		})
 

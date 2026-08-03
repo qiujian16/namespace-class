@@ -22,7 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"sort"
+	"slices"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -135,11 +135,11 @@ func equalWithoutStatus(a, b *unstructured.Unstructured) bool {
 // filterMetadata extracts only labels and annotations from a metadata map.
 // Returns nil if both are empty.
 func filterMetadata(raw any) any {
-	m, ok := raw.(map[string]interface{})
+	m, ok := raw.(map[string]any)
 	if !ok {
 		return raw
 	}
-	filtered := make(map[string]interface{})
+	filtered := make(map[string]any)
 	if labels, exists := m["labels"]; exists {
 		filtered["labels"] = labels
 	}
@@ -383,8 +383,14 @@ func buildDesiredResourceList(manifests []qiujian16githubcomv1.Manifest) []relat
 	}
 
 	// Sort for stable comparison
-	sort.Slice(result, func(i, j int) bool {
-		return resourceKey(result[i]) < resourceKey(result[j])
+	slices.SortFunc(result, func(a, b relatedResource) int {
+		if resourceKey(a) < resourceKey(b) {
+			return -1
+		}
+		if resourceKey(a) > resourceKey(b) {
+			return 1
+		}
+		return 0
 	})
 	return result
 }

@@ -52,23 +52,19 @@ var _ = Describe("Namespace Controller", func() {
 	}
 
 	configMapManifest := func(name string) qiujian16githubcomv1.Manifest {
-		cm := map[string]interface{}{
-			"apiVersion": "v1",
-			"kind":       "ConfigMap",
-			"metadata":   map[string]interface{}{"name": name},
-		}
-		raw, _ := json.Marshal(cm)
+		raw, _ := json.Marshal(&corev1.ConfigMap{
+			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+		})
 		return qiujian16githubcomv1.Manifest{RawExtension: runtime.RawExtension{Raw: raw}}
 	}
 
 	configMapManifestWithData := func(name string, data map[string]string) qiujian16githubcomv1.Manifest {
-		cm := map[string]interface{}{
-			"apiVersion": "v1",
-			"kind":       "ConfigMap",
-			"metadata":   map[string]interface{}{"name": name},
-			"data":       data,
-		}
-		raw, _ := json.Marshal(cm)
+		raw, _ := json.Marshal(&corev1.ConfigMap{
+			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Data:       data,
+		})
 		return qiujian16githubcomv1.Manifest{RawExtension: runtime.RawExtension{Raw: raw}}
 	}
 
@@ -249,9 +245,10 @@ var _ = Describe("Namespace Controller", func() {
 		}, "5s", "100ms").Should(BeTrue())
 
 		// Reconcile the NamespaceClass to trigger cleanup of related namespaces
-		newNCReconciler().Reconcile(ctx, reconcile.Request{
+		_, nsClassErr := newNCReconciler().Reconcile(ctx, reconcile.Request{
 			NamespacedName: types.NamespacedName{Name: nsClassName1},
 		})
+		Expect(nsClassErr).NotTo(HaveOccurred())
 
 		By("reconciling the namespace — NamespaceClass is gone")
 		reconcileNamespace(testNS)

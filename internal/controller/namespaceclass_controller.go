@@ -83,7 +83,7 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// examine DeletionTimestamp to determine if object is under deletion
-	if namespaceClass.ObjectMeta.DeletionTimestamp.IsZero() {
+	if namespaceClass.DeletionTimestamp.IsZero() {
 		// The object is not being deleted, so if it does not have our finalizer,
 		// then let's add the finalizer and update the object. This is equivalent
 		// to registering our finalizer.
@@ -122,7 +122,7 @@ func (r *NamespaceClassReconciler) cleanupRelatedNamespaces(ctx context.Context,
 
 	// List all namespaces with the NamespaceClassLabelKey label matching this namespaceclass
 	namespaceList := &corev1.NamespaceList{}
-	if err := r.Client.List(ctx, namespaceList, client.MatchingLabels{
+	if err := r.List(ctx, namespaceList, client.MatchingLabels{
 		NamespaceClassLabelKey: ncl.Name,
 	}); err != nil {
 		return fmt.Errorf("failed to list namespaces for namespaceclass %s: %w", ncl.Name, err)
@@ -183,7 +183,7 @@ func (r *NamespaceClassReconciler) deleteManifestFromNamespace(ctx context.Conte
 // annotation from the specified namespace.
 func (r *NamespaceClassReconciler) removeRelatedResourcesAnnotation(ctx context.Context, namespace string) error {
 	ns := &corev1.Namespace{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: namespace}, ns); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: namespace}, ns); err != nil {
 		return fmt.Errorf("failed to get namespace %s: %w", namespace, err)
 	}
 
@@ -199,7 +199,7 @@ func (r *NamespaceClassReconciler) removeRelatedResourcesAnnotation(ctx context.
 	delete(annotations, NamespaceClassRelatedResourcesAnnotationKey)
 	ns.SetAnnotations(annotations)
 
-	if err := r.Client.Update(ctx, ns); err != nil {
+	if err := r.Update(ctx, ns); err != nil {
 		return fmt.Errorf("failed to update namespace %s: %w", namespace, err)
 	}
 
