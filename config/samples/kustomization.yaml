@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- qiujian16.github.com_v1_namespaceclass.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
