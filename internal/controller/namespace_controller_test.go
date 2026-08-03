@@ -178,8 +178,14 @@ var _ = Describe("Namespace Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cm2.Name).To(Equal("cm-two"))
 
-		By("verifying the annotation records the applied resources")
-		Expect(getAnnotation(testNS)).To(HaveLen(2))
+		By("verifying the annotation records the applied resources with status")
+		resources := getAnnotation(testNS)
+		Expect(resources).To(HaveLen(2))
+		for _, r := range resources {
+			Expect(r.Status.Type).To(Equal("Applied"))
+			Expect(r.Status.Status).To(Equal(metav1.ConditionTrue))
+			Expect(r.Status.Reason).To(Equal("ResourceApplied"))
+		}
 	})
 
 	// 2. Update NamespaceClass (add and remove manifests)
@@ -216,10 +222,13 @@ var _ = Describe("Namespace Controller", func() {
 		_, err = getConfigMap("cm-two", testNS)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("verifying the annotation only contains cm-two")
+		By("verifying the annotation only contains cm-two with success status")
 		resources := getAnnotation(testNS)
 		Expect(resources).To(HaveLen(1))
 		Expect(resources[0].Name).To(Equal("cm-two"))
+		Expect(resources[0].Status.Type).To(Equal("Applied"))
+		Expect(resources[0].Status.Status).To(Equal(metav1.ConditionTrue))
+		Expect(resources[0].Status.Reason).To(Equal("ResourceApplied"))
 	})
 
 	// 3. Delete NamespaceClass
@@ -291,10 +300,13 @@ var _ = Describe("Namespace Controller", func() {
 		_, err = getConfigMap("cm-from-second", testNS)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("verifying annotation reflects only the second NamespaceClass")
+		By("verifying annotation reflects only the second NamespaceClass with success status")
 		resources := getAnnotation(testNS)
 		Expect(resources).To(HaveLen(1))
 		Expect(resources[0].Name).To(Equal("cm-from-second"))
+		Expect(resources[0].Status.Type).To(Equal("Applied"))
+		Expect(resources[0].Status.Status).To(Equal(metav1.ConditionTrue))
+		Expect(resources[0].Status.Reason).To(Equal("ResourceApplied"))
 	})
 
 	// 5. Remove label from namespace
@@ -371,6 +383,47 @@ var _ = Describe("Namespace Controller", func() {
 	})
 
 	// 7. Update a resource (external modification → controller reverts)
+	// 8. Error case — nonexistent resource type records apply failure in status.
+	It("should record apply failure status for invalid resource types", func() {
+		By("creating a NamespaceClass with a valid ConfigMap and an invalid resource")
+		invalidManifest := qiujian16githubcomv1.Manifest{RawExtension: runtime.RawExtension{
+			Raw: []byte(`{"apiVersion":"invalid.example.com/v1","kind":"FakeThing","metadata":{"name":"bad-resource"}}`),
+		}}
+		createNamespaceClass(nsClassName1,
+			configMapManifest("cm-valid"),
+			invalidManifest,
+		)
+		createNamespace(testNS, nsClassName1)
+
+		By("reconciling (expecting apply errors for the invalid manifest)")
+		_, reconcileErr := newNSReconciler().Reconcile(ctx, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: testNS},
+		})
+		Expect(reconcileErr).To(HaveOccurred())
+
+		By("verifying the valid ConfigMap was created")
+		_, err := getConfigMap("cm-valid", testNS)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("checking the annotation has status for both resources")
+		resources := getAnnotation(testNS)
+		Expect(resources).To(HaveLen(2))
+
+		for _, r := range resources {
+			switch r.Name {
+			case "cm-valid":
+				Expect(r.Status.Type).To(Equal("Applied"))
+				Expect(r.Status.Status).To(Equal(metav1.ConditionTrue))
+				Expect(r.Status.Reason).To(Equal("ResourceApplied"))
+			case "bad-resource":
+				Expect(r.Status.Type).To(Equal("Applied"))
+				Expect(r.Status.Status).To(Equal(metav1.ConditionFalse))
+				Expect(r.Status.Reason).To(Equal("ResourceApplyFailed"))
+				Expect(r.Status.Message).NotTo(BeEmpty())
+			}
+		}
+	})
+
 	It("should revert external modifications to managed resources", func() {
 		By("creating a NamespaceClass with a ConfigMap")
 		createNamespaceClass(nsClassName1,

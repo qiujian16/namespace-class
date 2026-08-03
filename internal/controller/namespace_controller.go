@@ -50,12 +50,18 @@ import (
 
 // relatedResource represents a single resource that was applied to a namespace.
 type relatedResource struct {
-	APIVersion string `json:"apiVersion"`
-	Kind       string `json:"kind"`
-	Name       string `json:"name"`
+	APIVersion string           `json:"apiVersion"`
+	Kind       string           `json:"kind"`
+	Name       string           `json:"name"`
+	Status     metav1.Condition `json:"status,omitzero"`
 }
 
 const (
+	// Apply status condition type and reasons.
+	applyConditionType             = "Applied"
+	applyReasonResourceApplied     = "ResourceApplied"
+	applyReasonResourceApplyFailed = "ResourceApplyFailed"
+
 	// NamespaceFinalizer is the finalizer added to namespaces managed by this controller.
 	// It blocks namespace deletion until the applied resources have been cleaned up.
 	NamespaceFinalizer = "qiujian16.github.com/namespace-finalizer"
@@ -221,28 +227,47 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, fmt.Errorf("failed to get namespaceclass %s: %w", namespaceClassName, err)
 	}
 
-	// Build the desired resource list from the NamespaceClass spec
-	desiredResources := buildDesiredResourceList(namespaceClass.Spec.Policies.Manifests)
+	// Apply manifests and build the desired resource list with apply status.
+	var desiredResources []relatedResource
+	var errs []error
+	for _, manifest := range namespaceClass.Spec.Policies.Manifests {
+		res, err := r.applyManifestToNamespace(ctx, manifest, ns.Name)
+		if err != nil {
+			logger.Error(err, "failed to apply manifest to namespace", "namespace", ns.Name)
+			errs = append(errs, err)
+			res = resourceFromManifest(manifest)
+			res.Status = metav1.Condition{
+				Type:    applyConditionType,
+				Status:  metav1.ConditionFalse,
+				Reason:  applyReasonResourceApplyFailed,
+				Message: err.Error(),
+			}
+		} else {
+			res.Status = metav1.Condition{
+				Type:   applyConditionType,
+				Status: metav1.ConditionTrue,
+				Reason: applyReasonResourceApplied,
+			}
+		}
+		desiredResources = append(desiredResources, res)
+	}
+
+	// Sort for stable comparison and annotation.
+	slices.SortFunc(desiredResources, func(a, b relatedResource) int {
+		if resourceKey(a) < resourceKey(b) {
+			return -1
+		}
+		if resourceKey(a) > resourceKey(b) {
+			return 1
+		}
+		return 0
+	})
 
 	// Parse the existing annotation
 	existingResources := parseRelatedResourcesAnnotation(ns)
 
 	// Find resources to remove (in existing but not in desired)
 	toRemove := diffResources(existingResources, desiredResources)
-
-	var errs []error
-
-	// Apply all desired resources (create or update).
-	// Even if an apply fails the resource should still be in desiredResources
-	// (it likely exists from a previous reconciliation), so we don't
-	// conditionally track it — we always use desiredResources for the annotation.
-	for _, manifest := range namespaceClass.Spec.Policies.Manifests {
-		if _, err := r.applyManifestToNamespace(ctx, manifest, ns.Name); err != nil {
-			logger.Error(err, "failed to apply manifest to namespace", "namespace", ns.Name)
-			errs = append(errs, err)
-			continue
-		}
-	}
 
 	// Delete resources that are no longer in the NamespaceClass spec.
 	// Track failures so they remain in the annotation and are retried next reconcile.
@@ -365,34 +390,19 @@ func (r *NamespaceReconciler) enqueueNamespacesForNamespaceClass(ctx context.Con
 // Helper functions
 // ---------------------------------------------------------------------------
 
-// buildDesiredResourceList builds a sorted list of relatedResource from the
-// NamespaceClass manifests.
-func buildDesiredResourceList(manifests []qiujian16githubcomv1.Manifest) []relatedResource {
-	var result []relatedResource
-	for _, m := range manifests {
-		obj := &unstructured.Unstructured{}
-		if err := obj.UnmarshalJSON(m.Raw); err != nil {
-			continue
-		}
-		gvk := obj.GroupVersionKind()
-		result = append(result, relatedResource{
-			APIVersion: gvk.GroupVersion().String(),
-			Kind:       gvk.Kind,
-			Name:       obj.GetName(),
-		})
+// resourceFromManifest extracts apiVersion, kind, and name from a raw manifest.
+// The returned resource has no status set.
+func resourceFromManifest(manifest qiujian16githubcomv1.Manifest) relatedResource {
+	obj := &unstructured.Unstructured{}
+	if err := obj.UnmarshalJSON(manifest.Raw); err != nil {
+		return relatedResource{}
 	}
-
-	// Sort for stable comparison
-	slices.SortFunc(result, func(a, b relatedResource) int {
-		if resourceKey(a) < resourceKey(b) {
-			return -1
-		}
-		if resourceKey(a) > resourceKey(b) {
-			return 1
-		}
-		return 0
-	})
-	return result
+	gvk := obj.GroupVersionKind()
+	return relatedResource{
+		APIVersion: gvk.GroupVersion().String(),
+		Kind:       gvk.Kind,
+		Name:       obj.GetName(),
+	}
 }
 
 // parseRelatedResourcesAnnotation parses the NamespaceClassRelatedResourcesAnnotationKey
