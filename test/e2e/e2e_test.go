@@ -432,7 +432,7 @@ var _ = Describe("Manager", Ordered, func() {
 
 			By("verifying cm-a is deleted and cm-b is created")
 			Eventually(func() string {
-				out, _ := kubectl("get", "configmap", "e2e-cm-a", "-n", testNS, "-o", "jsonpath={.metadata.name}")
+				out, _ := kubectl("get", "configmap", "e2e-cm-a", "-n", testNS, "--ignore-not-found", "-o", "jsonpath={.metadata.name}")
 				return out
 			}, "30s", "1s").Should(BeEmpty())
 
