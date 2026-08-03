@@ -326,9 +326,19 @@ var _ = Describe("Manager", Ordered, func() {
 			testNS       = "e2e-test-ns"
 			nsClassName  = "e2e-nsclass"
 			nsClassName2 = "e2e-nsclass-2"
-			cmTemplate   = `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"%s"}}`
 			labelKey     = "namespaceclass.akuity.io/name"
 		)
+
+		// Manifests for different resource kinds used across tests.
+		cmManifest := func(name string) string {
+			return fmt.Sprintf(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"%s"}}`, name)
+		}
+		saManifest := func(name string) string {
+			return fmt.Sprintf(`{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"%s"}}`, name)
+		}
+		npManifest := func(name string) string {
+			return fmt.Sprintf(`{"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy","metadata":{"name":"%s"},"spec":{"podSelector":{},"policyTypes":["Ingress"]}}`, name)
+		}
 
 		// kubectl helpers
 		kubectl := func(args ...string) (string, error) {
@@ -341,6 +351,22 @@ var _ = Describe("Manager", Ordered, func() {
 			cmd.Stdin = strings.NewReader(manifest)
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
+		}
+
+		// resourceExists waits for a resource to exist in the test namespace.
+		resourceExists := func(kind, name string) {
+			Eventually(func() string {
+				out, _ := kubectl("get", kind, name, "-n", testNS, "-o", "jsonpath={.metadata.name}")
+				return out
+			}, "30s", "1s").Should(Equal(name))
+		}
+
+		// resourceGone waits for a resource to be deleted from the test namespace.
+		resourceGone := func(kind, name string) {
+			Eventually(func() string {
+				out, _ := kubectl("get", kind, name, "-n", testNS, "--ignore-not-found", "-o", "jsonpath={.metadata.name}")
+				return out
+			}, "30s", "1s").Should(BeEmpty())
 		}
 
 		cleanupE2E := func() {
@@ -366,19 +392,21 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 
 		// 1. Create NamespaceClass and label namespace
-		It("should apply ConfigMaps when a namespace is labeled", func() {
-			By("creating a NamespaceClass with ConfigMap manifests")
+		It("should apply mixed resources when a namespace is labeled", func() {
+			By("creating a NamespaceClass with ConfigMap, ServiceAccount, and NetworkPolicy")
 			nsClass := fmt.Sprintf(`{
 				"apiVersion":"qiujian16.github.com.qiujian16.github.com/v1",
 				"kind":"NamespaceClass",
 				"metadata":{"name":"%s"},
 				"spec":{"policies":{"manifests":[
 					%s,
+					%s,
 					%s
 				]}}
 			}`, nsClassName,
-				fmt.Sprintf(cmTemplate, "e2e-cm-a"),
-				fmt.Sprintf(cmTemplate, "e2e-cm-b"),
+				cmManifest("e2e-cm"),
+				saManifest("e2e-sa"),
+				npManifest("e2e-np"),
 			)
 			kubectlApply(nsClass)
 
@@ -388,27 +416,21 @@ var _ = Describe("Manager", Ordered, func() {
 			_, err = kubectl("label", "namespace", testNS, labelKey+"="+nsClassName, "--overwrite")
 			Expect(err).NotTo(HaveOccurred())
 
-			By("waiting for ConfigMaps to be created")
-			Eventually(func() string {
-				out, _ := kubectl("get", "configmap", "e2e-cm-a", "-n", testNS, "-o", "jsonpath={.metadata.name}")
-				return out
-			}, "30s", "1s").Should(Equal("e2e-cm-a"))
-
-			Eventually(func() string {
-				out, _ := kubectl("get", "configmap", "e2e-cm-b", "-n", testNS, "-o", "jsonpath={.metadata.name}")
-				return out
-			}, "30s", "1s").Should(Equal("e2e-cm-b"))
+			By("waiting for resources to be created")
+			resourceExists("configmap", "e2e-cm")
+			resourceExists("serviceaccount", "e2e-sa")
+			resourceExists("networkpolicy", "e2e-np")
 		})
 
 		// 2. Update NamespaceClass
-		It("should add and remove resources when NamespaceClass is updated", func() {
-			By("creating a NamespaceClass with one ConfigMap")
+		It("should add and remove mixed resources when NamespaceClass is updated", func() {
+			By("creating a NamespaceClass with a ConfigMap and ServiceAccount")
 			nsClass := fmt.Sprintf(`{
 				"apiVersion":"qiujian16.github.com.qiujian16.github.com/v1",
 				"kind":"NamespaceClass",
 				"metadata":{"name":"%s"},
-				"spec":{"policies":{"manifests":[%s]}}
-			}`, nsClassName, fmt.Sprintf(cmTemplate, "e2e-cm-a"))
+				"spec":{"policies":{"manifests":[%s,%s]}}
+			}`, nsClassName, cmManifest("e2e-cm-a"), saManifest("e2e-sa-a"))
 			kubectlApply(nsClass)
 
 			_, err := kubectl("create", "namespace", testNS)
@@ -416,41 +438,33 @@ var _ = Describe("Manager", Ordered, func() {
 			_, err = kubectl("label", "namespace", testNS, labelKey+"="+nsClassName)
 			Expect(err).NotTo(HaveOccurred())
 
-			Eventually(func() string {
-				out, _ := kubectl("get", "configmap", "e2e-cm-a", "-n", testNS, "-o", "jsonpath={.metadata.name}")
-				return out
-			}, "30s", "1s").Should(Equal("e2e-cm-a"))
+			resourceExists("configmap", "e2e-cm-a")
+			resourceExists("serviceaccount", "e2e-sa-a")
 
-			By("updating the NamespaceClass to add cm-b and remove cm-a")
+			By("updating the NamespaceClass to replace cm-a with cm-b and add NetworkPolicy")
 			nsClass = fmt.Sprintf(`{
 				"apiVersion":"qiujian16.github.com.qiujian16.github.com/v1",
 				"kind":"NamespaceClass",
 				"metadata":{"name":"%s"},
-				"spec":{"policies":{"manifests":[%s]}}
-			}`, nsClassName, fmt.Sprintf(cmTemplate, "e2e-cm-b"))
+				"spec":{"policies":{"manifests":[%s,%s,%s]}}
+			}`, nsClassName, cmManifest("e2e-cm-b"), saManifest("e2e-sa-a"), npManifest("e2e-np"))
 			kubectlApply(nsClass)
 
-			By("verifying cm-a is deleted and cm-b is created")
-			Eventually(func() string {
-				out, _ := kubectl("get", "configmap", "e2e-cm-a", "-n", testNS, "--ignore-not-found", "-o", "jsonpath={.metadata.name}")
-				return out
-			}, "30s", "1s").Should(BeEmpty())
-
-			Eventually(func() string {
-				out, _ := kubectl("get", "configmap", "e2e-cm-b", "-n", testNS, "-o", "jsonpath={.metadata.name}")
-				return out
-			}, "30s", "1s").Should(Equal("e2e-cm-b"))
+			By("verifying stale resources are removed and new ones are created")
+			resourceGone("configmap", "e2e-cm-a")
+			resourceExists("configmap", "e2e-cm-b")
+			resourceExists("networkpolicy", "e2e-np")
 		})
 
 		// 3. Delete NamespaceClass
-		It("should clean up resources when NamespaceClass is deleted", func() {
-			By("creating a NamespaceClass with ConfigMaps")
+		It("should clean up mixed resources when NamespaceClass is deleted", func() {
+			By("creating a NamespaceClass with ConfigMap and ServiceAccount")
 			nsClass := fmt.Sprintf(`{
 				"apiVersion":"qiujian16.github.com.qiujian16.github.com/v1",
 				"kind":"NamespaceClass",
 				"metadata":{"name":"%s"},
-				"spec":{"policies":{"manifests":[%s]}}
-			}`, nsClassName, fmt.Sprintf(cmTemplate, "e2e-cm-a"))
+				"spec":{"policies":{"manifests":[%s,%s]}}
+			}`, nsClassName, cmManifest("e2e-cm-a"), saManifest("e2e-sa-a"))
 			kubectlApply(nsClass)
 
 			_, err := kubectl("create", "namespace", testNS)
@@ -458,39 +472,35 @@ var _ = Describe("Manager", Ordered, func() {
 			_, err = kubectl("label", "namespace", testNS, labelKey+"="+nsClassName)
 			Expect(err).NotTo(HaveOccurred())
 
-			Eventually(func() string {
-				out, _ := kubectl("get", "configmap", "e2e-cm-a", "-n", testNS, "-o", "jsonpath={.metadata.name}")
-				return out
-			}, "30s", "1s").Should(Equal("e2e-cm-a"))
+			resourceExists("configmap", "e2e-cm-a")
+			resourceExists("serviceaccount", "e2e-sa-a")
 
 			By("deleting the NamespaceClass")
 			_, err = kubectl("delete", "namespaceclass", nsClassName)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("verifying ConfigMap is cleaned up")
-			Eventually(func() string {
-				out, _ := kubectl("get", "configmap", "e2e-cm-a", "-n", testNS, "--ignore-not-found", "-o", "jsonpath={.metadata.name}")
-				return out
-			}, "30s", "1s").Should(BeEmpty())
+			By("verifying resources are cleaned up")
+			resourceGone("configmap", "e2e-cm-a")
+			resourceGone("serviceaccount", "e2e-sa-a")
 		})
 
 		// 4. Label namespace to another NamespaceClass
-		It("should switch resources when relabeling namespace", func() {
+		It("should switch mixed resources when relabeling namespace", func() {
 			By("creating two NamespaceClasses")
 			nsClass1 := fmt.Sprintf(`{
 				"apiVersion":"qiujian16.github.com.qiujian16.github.com/v1",
 				"kind":"NamespaceClass",
 				"metadata":{"name":"%s"},
-				"spec":{"policies":{"manifests":[%s]}}
-			}`, nsClassName, fmt.Sprintf(cmTemplate, "e2e-cm-first"))
+				"spec":{"policies":{"manifests":[%s,%s]}}
+			}`, nsClassName, cmManifest("e2e-cm-first"), saManifest("e2e-sa-first"))
 			kubectlApply(nsClass1)
 
 			nsClass2 := fmt.Sprintf(`{
 				"apiVersion":"qiujian16.github.com.qiujian16.github.com/v1",
 				"kind":"NamespaceClass",
 				"metadata":{"name":"%s"},
-				"spec":{"policies":{"manifests":[%s]}}
-			}`, nsClassName2, fmt.Sprintf(cmTemplate, "e2e-cm-second"))
+				"spec":{"policies":{"manifests":[%s,%s]}}
+			}`, nsClassName2, cmManifest("e2e-cm-second"), npManifest("e2e-np-second"))
 			kubectlApply(nsClass2)
 
 			_, err := kubectl("create", "namespace", testNS)
@@ -498,25 +508,18 @@ var _ = Describe("Manager", Ordered, func() {
 			_, err = kubectl("label", "namespace", testNS, labelKey+"="+nsClassName)
 			Expect(err).NotTo(HaveOccurred())
 
-			Eventually(func() string {
-				out, _ := kubectl("get", "configmap", "e2e-cm-first", "-n", testNS, "-o", "jsonpath={.metadata.name}")
-				return out
-			}, "30s", "1s").Should(Equal("e2e-cm-first"))
+			resourceExists("configmap", "e2e-cm-first")
+			resourceExists("serviceaccount", "e2e-sa-first")
 
 			By("relabeling to the second NamespaceClass")
 			_, err = kubectl("label", "namespace", testNS, labelKey+"="+nsClassName2, "--overwrite")
 			Expect(err).NotTo(HaveOccurred())
 
-			By("verifying first ConfigMap is removed and second is applied")
-			Eventually(func() string {
-				out, _ := kubectl("get", "configmap", "e2e-cm-first", "-n", testNS, "--ignore-not-found", "-o", "jsonpath={.metadata.name}")
-				return out
-			}, "30s", "1s").Should(BeEmpty())
-
-			Eventually(func() string {
-				out, _ := kubectl("get", "configmap", "e2e-cm-second", "-n", testNS, "-o", "jsonpath={.metadata.name}")
-				return out
-			}, "30s", "1s").Should(Equal("e2e-cm-second"))
+			By("verifying first NC resources are removed and second NC resources are applied")
+			resourceGone("configmap", "e2e-cm-first")
+			resourceGone("serviceaccount", "e2e-sa-first")
+			resourceExists("configmap", "e2e-cm-second")
+			resourceExists("networkpolicy", "e2e-np-second")
 
 			By("verifying the first NamespaceClass still exists (was not deleted)")
 			out, err := kubectl("get", "namespaceclass", nsClassName, "-o", "jsonpath={.metadata.name}")
@@ -531,16 +534,16 @@ var _ = Describe("Manager", Ordered, func() {
 				"apiVersion":"qiujian16.github.com.qiujian16.github.com/v1",
 				"kind":"NamespaceClass",
 				"metadata":{"name":"%s"},
-				"spec":{"policies":{"manifests":[%s]}}
-			}`, nsClassName, fmt.Sprintf(cmTemplate, "e2e-cm-old"))
+				"spec":{"policies":{"manifests":[%s,%s]}}
+			}`, nsClassName, cmManifest("e2e-cm-old"), saManifest("e2e-sa-old"))
 			kubectlApply(nsClass1)
 
 			nsClass2 := fmt.Sprintf(`{
 				"apiVersion":"qiujian16.github.com.qiujian16.github.com/v1",
 				"kind":"NamespaceClass",
 				"metadata":{"name":"%s"},
-				"spec":{"policies":{"manifests":[%s]}}
-			}`, nsClassName2, fmt.Sprintf(cmTemplate, "e2e-cm-new"))
+				"spec":{"policies":{"manifests":[%s,%s]}}
+			}`, nsClassName2, cmManifest("e2e-cm-new"), npManifest("e2e-np-new"))
 			kubectlApply(nsClass2)
 
 			_, err := kubectl("create", "namespace", testNS)
@@ -548,19 +551,15 @@ var _ = Describe("Manager", Ordered, func() {
 			_, err = kubectl("label", "namespace", testNS, labelKey+"="+nsClassName)
 			Expect(err).NotTo(HaveOccurred())
 
-			Eventually(func() string {
-				out, _ := kubectl("get", "configmap", "e2e-cm-old", "-n", testNS, "-o", "jsonpath={.metadata.name}")
-				return out
-			}, "30s", "1s").Should(Equal("e2e-cm-old"))
+			resourceExists("configmap", "e2e-cm-old")
+			resourceExists("serviceaccount", "e2e-sa-old")
 
 			By("relabeling to the second NamespaceClass")
 			_, err = kubectl("label", "namespace", testNS, labelKey+"="+nsClassName2, "--overwrite")
 			Expect(err).NotTo(HaveOccurred())
 
-			Eventually(func() string {
-				out, _ := kubectl("get", "configmap", "e2e-cm-new", "-n", testNS, "-o", "jsonpath={.metadata.name}")
-				return out
-			}, "30s", "1s").Should(Equal("e2e-cm-new"))
+			resourceExists("configmap", "e2e-cm-new")
+			resourceExists("networkpolicy", "e2e-np-new")
 
 			By("deleting the first NamespaceClass")
 			_, err = kubectl("delete", "namespaceclass", nsClassName)
@@ -574,13 +573,13 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 
 		// 5. Remove label from namespace
-		It("should clean up resources when the label is removed", func() {
+		It("should clean up mixed resources when the label is removed", func() {
 			nsClass := fmt.Sprintf(`{
 				"apiVersion":"qiujian16.github.com.qiujian16.github.com/v1",
 				"kind":"NamespaceClass",
 				"metadata":{"name":"%s"},
-				"spec":{"policies":{"manifests":[%s]}}
-			}`, nsClassName, fmt.Sprintf(cmTemplate, "e2e-cm-a"))
+				"spec":{"policies":{"manifests":[%s,%s]}}
+			}`, nsClassName, cmManifest("e2e-cm-a"), npManifest("e2e-np-a"))
 			kubectlApply(nsClass)
 
 			_, err := kubectl("create", "namespace", testNS)
@@ -588,30 +587,26 @@ var _ = Describe("Manager", Ordered, func() {
 			_, err = kubectl("label", "namespace", testNS, labelKey+"="+nsClassName)
 			Expect(err).NotTo(HaveOccurred())
 
-			Eventually(func() string {
-				out, _ := kubectl("get", "configmap", "e2e-cm-a", "-n", testNS, "-o", "jsonpath={.metadata.name}")
-				return out
-			}, "30s", "1s").Should(Equal("e2e-cm-a"))
+			resourceExists("configmap", "e2e-cm-a")
+			resourceExists("networkpolicy", "e2e-np-a")
 
 			By("removing the NamespaceClass label")
 			_, err = kubectl("label", "namespace", testNS, labelKey+"-")
 			Expect(err).NotTo(HaveOccurred())
 
-			By("verifying ConfigMap is deleted")
-			Eventually(func() string {
-				out, _ := kubectl("get", "configmap", "e2e-cm-a", "-n", testNS, "--ignore-not-found", "-o", "jsonpath={.metadata.name}")
-				return out
-			}, "30s", "1s").Should(BeEmpty())
+			By("verifying resources are cleaned up")
+			resourceGone("configmap", "e2e-cm-a")
+			resourceGone("networkpolicy", "e2e-np-a")
 		})
 
 		// 6. Delete namespace
-		It("should clean up resources when namespace is deleted", func() {
+		It("should clean up mixed resources when namespace is deleted", func() {
 			nsClass := fmt.Sprintf(`{
 				"apiVersion":"qiujian16.github.com.qiujian16.github.com/v1",
 				"kind":"NamespaceClass",
 				"metadata":{"name":"%s"},
-				"spec":{"policies":{"manifests":[%s]}}
-			}`, nsClassName, fmt.Sprintf(cmTemplate, "e2e-cm-a"))
+				"spec":{"policies":{"manifests":[%s,%s]}}
+			}`, nsClassName, cmManifest("e2e-cm-a"), saManifest("e2e-sa-a"))
 			kubectlApply(nsClass)
 
 			_, err := kubectl("create", "namespace", testNS)
@@ -619,10 +614,8 @@ var _ = Describe("Manager", Ordered, func() {
 			_, err = kubectl("label", "namespace", testNS, labelKey+"="+nsClassName)
 			Expect(err).NotTo(HaveOccurred())
 
-			Eventually(func() string {
-				out, _ := kubectl("get", "configmap", "e2e-cm-a", "-n", testNS, "-o", "jsonpath={.metadata.name}")
-				return out
-			}, "30s", "1s").Should(Equal("e2e-cm-a"))
+			resourceExists("configmap", "e2e-cm-a")
+			resourceExists("serviceaccount", "e2e-sa-a")
 
 			By("deleting the namespace")
 			_, err = kubectl("delete", "namespace", testNS, "--timeout=60s")
@@ -646,8 +639,8 @@ var _ = Describe("Manager", Ordered, func() {
 					"kind":"ConfigMap",
 					"metadata":{"name":"e2e-cm-managed"},
 					"data":{"key":"original-value"}
-				}]}}
-			}`, nsClassName)
+				},%s]}}
+			}`, nsClassName, saManifest("e2e-sa-managed"))
 			kubectlApply(nsClass)
 
 			_, err := kubectl("create", "namespace", testNS)
@@ -655,6 +648,7 @@ var _ = Describe("Manager", Ordered, func() {
 			_, err = kubectl("label", "namespace", testNS, labelKey+"="+nsClassName)
 			Expect(err).NotTo(HaveOccurred())
 
+			resourceExists("serviceaccount", "e2e-sa-managed")
 			Eventually(func() string {
 				out, _ := kubectl("get", "configmap", "e2e-cm-managed", "-n", testNS, "-o", "jsonpath={.data.key}")
 				return out
