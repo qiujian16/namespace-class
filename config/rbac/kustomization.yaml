@@ -22,6 +22,7 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the namespace-class itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- cluster_admin_role_binding.yaml
 - namespaceclass_admin_role.yaml
 - namespaceclass_editor_role.yaml
 - namespaceclass_viewer_role.yaml

@@ -39,6 +39,7 @@ import (
 
 	qiujian16githubcomv1 "github.com/qiujian16/namespace-class/api/v1"
 	"github.com/qiujian16/namespace-class/internal/controller"
+	webhookv1 "github.com/qiujian16/namespace-class/internal/webhook/v1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -215,6 +216,13 @@ func main() {
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "namespace")
 		os.Exit(1)
+	}
+	// nolint:goconst
+	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+		if err := webhookv1.SetupNamespaceClassWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "NamespaceClass")
+			os.Exit(1)
+		}
 	}
 	// +kubebuilder:scaffold:builder
 
