@@ -370,16 +370,9 @@ var _ = Describe("Manager", Ordered, func() {
 		}
 
 		cleanupE2E := func() {
-			// Remove namespace finalizer if present (via kubectl patch)
-			_, _ = kubectl("patch", "namespace", testNS, "-p",
-				`{"metadata":{"finalizers":[]}}`, "--type=merge")
-			_, _ = kubectl("delete", "namespace", testNS, "--ignore-not-found", "--timeout=30s")
-
-			// Remove namespaceclass finalizers
+			_, _ = kubectl("delete", "namespace", testNS, "--ignore-not-found", "--timeout=60s")
 			for _, name := range []string{nsClassName, nsClassName2} {
-				_, _ = kubectl("patch", "namespaceclass", name, "-p",
-					`{"metadata":{"finalizers":[]}}`, "--type=merge")
-				_, _ = kubectl("delete", "namespaceclass", name, "--ignore-not-found", "--timeout=30s")
+				_, _ = kubectl("delete", "namespaceclass", name, "--ignore-not-found", "--timeout=60s")
 			}
 		}
 
@@ -597,6 +590,60 @@ var _ = Describe("Manager", Ordered, func() {
 			By("verifying resources are cleaned up")
 			resourceGone("configmap", "e2e-cm-a")
 			resourceGone("networkpolicy", "e2e-np-a")
+		})
+
+		// 5b. Two namespaces referencing the same NamespaceClass — both update when NC changes.
+		It("should update resources in all namespaces when NamespaceClass is updated", func() {
+			testNS2 := testNS + "-2"
+			By("creating a NamespaceClass with ConfigMap and ServiceAccount")
+			nsClass := fmt.Sprintf(`{
+				"apiVersion":"qiujian16.github.com.qiujian16.github.com/v1",
+				"kind":"NamespaceClass",
+				"metadata":{"name":"%s"},
+				"spec":{"policies":{"manifests":[%s,%s]}}
+			}`, nsClassName, cmManifest("e2e-cm-a"), saManifest("e2e-sa-a"))
+			kubectlApply(nsClass)
+
+			By("creating two namespaces both labeled with the NamespaceClass")
+			for _, ns := range []string{testNS, testNS2} {
+				_, err := kubectl("create", "namespace", ns)
+				Expect(err).NotTo(HaveOccurred())
+				_, err = kubectl("label", "namespace", ns, labelKey+"="+nsClassName)
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			By("verifying resources exist in both namespaces")
+			for _, ns := range []string{testNS, testNS2} {
+				resourceExistsInNS := func(kind, name string) {
+					Eventually(func() string {
+						out, _ := kubectl("get", kind, name, "-n", ns, "-o", "jsonpath={.metadata.name}")
+						return out
+					}, "30s", "1s").Should(Equal(name))
+				}
+				resourceExistsInNS("configmap", "e2e-cm-a")
+				resourceExistsInNS("serviceaccount", "e2e-sa-a")
+			}
+
+			By("updating the NamespaceClass to add a NetworkPolicy")
+			nsClass = fmt.Sprintf(`{
+				"apiVersion":"qiujian16.github.com.qiujian16.github.com/v1",
+				"kind":"NamespaceClass",
+				"metadata":{"name":"%s"},
+				"spec":{"policies":{"manifests":[%s,%s,%s]}}
+			}`, nsClassName, cmManifest("e2e-cm-a"), saManifest("e2e-sa-a"), npManifest("e2e-np"))
+			kubectlApply(nsClass)
+
+			By("verifying the NetworkPolicy appears in both namespaces")
+			for _, ns := range []string{testNS, testNS2} {
+				resourceExistsInNS := func(kind, name string) {
+					Eventually(func() string {
+						out, _ := kubectl("get", kind, name, "-n", ns, "-o", "jsonpath={.metadata.name}")
+						return out
+					}, "30s", "1s").Should(Equal(name))
+				}
+				resourceExistsInNS("networkpolicy", "e2e-np")
+			}
+
 		})
 
 		// 6. Delete namespace
