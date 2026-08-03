@@ -517,6 +517,60 @@ var _ = Describe("Manager", Ordered, func() {
 				out, _ := kubectl("get", "configmap", "e2e-cm-second", "-n", testNS, "-o", "jsonpath={.metadata.name}")
 				return out
 			}, "30s", "1s").Should(Equal("e2e-cm-second"))
+
+			By("verifying the first NamespaceClass still exists (was not deleted)")
+			out, err := kubectl("get", "namespaceclass", nsClassName, "-o", "jsonpath={.metadata.name}")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(Equal(nsClassName))
+		})
+
+		// 4b. Delete the old NamespaceClass after switching — the namespace should be unaffected.
+		It("should not affect namespace when old NamespaceClass is deleted after relabel", func() {
+			By("creating two NamespaceClasses")
+			nsClass1 := fmt.Sprintf(`{
+				"apiVersion":"qiujian16.github.com.qiujian16.github.com/v1",
+				"kind":"NamespaceClass",
+				"metadata":{"name":"%s"},
+				"spec":{"policies":{"manifests":[%s]}}
+			}`, nsClassName, fmt.Sprintf(cmTemplate, "e2e-cm-old"))
+			kubectlApply(nsClass1)
+
+			nsClass2 := fmt.Sprintf(`{
+				"apiVersion":"qiujian16.github.com.qiujian16.github.com/v1",
+				"kind":"NamespaceClass",
+				"metadata":{"name":"%s"},
+				"spec":{"policies":{"manifests":[%s]}}
+			}`, nsClassName2, fmt.Sprintf(cmTemplate, "e2e-cm-new"))
+			kubectlApply(nsClass2)
+
+			_, err := kubectl("create", "namespace", testNS)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = kubectl("label", "namespace", testNS, labelKey+"="+nsClassName)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() string {
+				out, _ := kubectl("get", "configmap", "e2e-cm-old", "-n", testNS, "-o", "jsonpath={.metadata.name}")
+				return out
+			}, "30s", "1s").Should(Equal("e2e-cm-old"))
+
+			By("relabeling to the second NamespaceClass")
+			_, err = kubectl("label", "namespace", testNS, labelKey+"="+nsClassName2, "--overwrite")
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() string {
+				out, _ := kubectl("get", "configmap", "e2e-cm-new", "-n", testNS, "-o", "jsonpath={.metadata.name}")
+				return out
+			}, "30s", "1s").Should(Equal("e2e-cm-new"))
+
+			By("deleting the first NamespaceClass")
+			_, err = kubectl("delete", "namespaceclass", nsClassName)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying the second NamespaceClass resources are unaffected")
+			Consistently(func() string {
+				out, _ := kubectl("get", "configmap", "e2e-cm-new", "-n", testNS, "-o", "jsonpath={.metadata.name}")
+				return out
+			}, "10s", "1s").Should(Equal("e2e-cm-new"))
 		})
 
 		// 5. Remove label from namespace
