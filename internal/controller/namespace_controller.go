@@ -512,24 +512,20 @@ func (r *NamespaceReconciler) cleanupAllResourcesForNamespace(ctx context.Contex
 		}
 	}
 
-	// Re-fetch and remove the annotation
-	latest := &corev1.Namespace{}
-	if err := r.Get(ctx, types.NamespacedName{Name: namespace}, latest); err != nil {
-		errs = append(errs, fmt.Errorf("failed to re-fetch namespace %s to remove annotation: %w", namespace, err))
+	if len(errs) != 0 {
 		return nil, errors.Join(errs...)
 	}
 
-	annotations := latest.GetAnnotations()
+	annotations := ns.GetAnnotations()
 	if annotations != nil {
 		delete(annotations, NamespaceClassRelatedResourcesAnnotationKey)
-		latest.SetAnnotations(annotations)
-		if err := r.Update(ctx, latest); err != nil {
-			errs = append(errs, fmt.Errorf("failed to remove annotation from namespace %s: %w", namespace, err))
-			return nil, errors.Join(errs...)
+		ns.SetAnnotations(annotations)
+		if err := r.Update(ctx, ns); err != nil {
+			return nil, err
 		}
 	}
 
-	return latest, nil
+	return ns, nil
 }
 
 // updateRelatedResourcesAnnotation updates the NamespaceClassRelatedResourcesAnnotationKey
